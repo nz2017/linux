@@ -281,7 +281,7 @@ static int mei_lb_check_response_v2(const struct device *dev, ssize_t bytes,
 			bytes, sizeof(rsp->rheader));
 		return -ENOMSG;
 	}
-	if (rsp->rheader.header.command_id != MEI_LB2_CMD) {
+	if (rsp->rheader.header.command_id != cpu_to_le32(MEI_LB2_CMD)) {
 		dev_err(dev, "Mismatch command: 0x%x instead of 0x%x\n",
 			rsp->rheader.header.command_id, MEI_LB2_CMD);
 		return -EPROTO;
@@ -312,22 +312,30 @@ static int mei_lb_push_payload_v2(struct device *dev, struct mei_cl_device *clde
 	size_t chunk_size;
 	size_t req_size;
 	ssize_t bytes;
+	size_t mtu;
 	int ret;
 
-	struct mei_lb2_req *req __free(kfree) = kzalloc(mei_cldev_mtu(cldev), GFP_KERNEL);
+	/* The MTU turns into 0 when a link reset disconnects the client */
+	mtu = mei_cldev_mtu(cldev);
+	if (mtu <= sizeof(struct mei_lb2_req)) {
+		dev_err(dev, "MTU is too small: %zu\n", mtu);
+		return -EMSGSIZE;
+	}
+
+	struct mei_lb2_req *req __free(kfree) = kzalloc(mtu, GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
 	first_chunk = MEI_LB2_FLAG_FST_CHUNK;
 	last_chunk = 0;
 	do {
-		chunk_size = min(payload_size - sent_data, mei_cldev_mtu(cldev) - sizeof(*req));
+		chunk_size = min(payload_size - sent_data, mtu - sizeof(*req));
 
 		req_size = struct_size(req, payload, chunk_size);
 		if (sent_data + chunk_size == payload_size)
 			last_chunk = MEI_LB2_FLAG_LST_CHUNK;
 
-		req->header.command_id = MEI_LB2_CMD;
+		req->header.command_id = cpu_to_le32(MEI_LB2_CMD);
 		req->type = cpu_to_le32(type);
 		req->flags = cpu_to_le32(flags | first_chunk | last_chunk);
 		req->reserved = 0;

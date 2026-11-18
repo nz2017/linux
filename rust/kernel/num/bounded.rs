@@ -13,7 +13,11 @@ use core::{
 };
 
 use kernel::{
-    num::Integer,
+    num::{
+        FromConst,
+        Integer,
+        Unsigned, //
+    },
     prelude::*, //
 };
 
@@ -174,13 +178,16 @@ fn fits_within<T: Integer>(value: T, num_bits: u32) -> bool {
 /// // `u8` (regardless of the passed value).
 /// // let _ = Bounded::<u32, 6>::from(10u8);
 ///
-/// // Booleans can be converted into single-bit `Bounded`s.
+/// // Booleans can be converted into unsigned `Bounded`s.
 ///
 /// let v = Bounded::<u64, 1>::from(false);
 /// assert_eq!(v.get(), 0);
 ///
 /// let v = Bounded::<u64, 1>::from(true);
 /// assert_eq!(v.get(), 1);
+///
+/// // This does not build because `i8` is signed.
+/// // let _ = Bounded::<i8, 2>::from(true);
 /// ```
 ///
 /// Infallible conversions from a [`Bounded`] to a primitive integer are also supported, and
@@ -203,12 +210,16 @@ fn fits_within<T: Integer>(value: T, num_bits: u32) -> bool {
 /// let _v = Bounded::<u32, 10>::new::<10>();
 /// // assert_eq!(u8::from(_v), 10);
 ///
-/// // Single-bit `Bounded`s can be converted into a boolean.
+/// // Unsigned single-bit `Bounded`s can be converted into a boolean.
 /// let v = Bounded::<u8, 1>::new::<1>();
 /// assert_eq!(bool::from(v), true);
 ///
 /// let v = Bounded::<u8, 1>::new::<0>();
 /// assert_eq!(bool::from(v), false);
+///
+/// // This does not build because `i8` is signed.
+/// // let v = Bounded::<i8, 1>::new::<-1>();
+/// // let _ = bool::from(v);
 /// ```
 ///
 /// Fallible conversions from any primitive integer to any [`Bounded`] are also supported using the
@@ -261,6 +272,21 @@ macro_rules! impl_const_new {
                 // `N` bits.
                 unsafe { Self::__new(VALUE) }
             }
+        }
+
+        impl<const N: u32, const V: i128> FromConst<V> for Bounded<$type, N> {
+            const VALUE: Self = {
+                let value = <$type as FromConst<V>>::VALUE;
+                // Statically assert that `value` fits within the set number of bits.
+                assert!(
+                    fits_within!(value, $type, N),
+                    "constant cannot be represented within the given number of bits"
+                );
+
+                // SAFETY: The assert above confirmed that `value` can be represented within `N`
+                // bits.
+                unsafe { Self::__new(value) }
+            };
         }
         )*
     };
@@ -1109,31 +1135,33 @@ impl_into_primitive!(
     i8 i16 i32 i64 isize
 );
 
-// Single-bit `Bounded`s can be converted from/to a boolean.
+// Unsigned single-bit `Bounded`s can be converted to a boolean.
 
 impl<T> From<Bounded<T, 1>> for bool
 where
-    T: Integer + Zeroable,
+    T: Integer<Signedness = Unsigned> + Zeroable,
 {
     fn from(value: Bounded<T, 1>) -> Self {
         value.get() != Zeroable::zeroed()
     }
 }
 
+// Booleans can be converted to unsigned `Bounded`s.
+
 impl<T, const N: u32> From<bool> for Bounded<T, N>
 where
-    T: Integer + From<bool>,
+    T: Integer<Signedness = Unsigned> + From<bool>,
 {
     fn from(value: bool) -> Self {
-        // SAFETY: A boolean can be represented using a single bit, and thus fits within any
-        // integer type for any `N` > 0.
+        // SAFETY: A boolean is represented by `0` or `1`, so it fits within any valid unsigned
+        // `Bounded` width.
         unsafe { Self::__new(T::from(value)) }
     }
 }
 
 impl<T> Bounded<T, 1>
 where
-    T: Integer + Zeroable,
+    T: Integer<Signedness = Unsigned> + Zeroable,
 {
     /// Converts this [`Bounded`] into a [`bool`].
     ///

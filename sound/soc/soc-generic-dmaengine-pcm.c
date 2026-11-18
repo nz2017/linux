@@ -32,7 +32,7 @@ static struct device *dmaengine_dma_dev(struct dmaengine_pcm *pcm,
 	if (!pcm->chan[substream->stream])
 		return NULL;
 
-	return pcm->chan[substream->stream]->device->dev;
+	return dmaengine_get_dma_device(pcm->chan[substream->stream]);
 }
 
 /**
@@ -242,9 +242,11 @@ static int dmaengine_pcm_new(struct snd_soc_component *component,
 		if (!substream)
 			continue;
 
-		if (!pcm->chan[i] && config->chan_names[i])
-			pcm->chan[i] = dma_request_slave_channel(dev,
-				config->chan_names[i]);
+		if (!pcm->chan[i] && config->chan_names[i]) {
+			pcm->chan[i] = dma_request_chan(dev, config->chan_names[i]);
+			if (IS_ERR(pcm->chan[i]))
+				pcm->chan[i] = NULL;
+		}
 
 		if (!pcm->chan[i] && (pcm->flags & SND_DMAENGINE_PCM_FLAG_COMPAT)) {
 			pcm->chan[i] = dmaengine_pcm_compat_request_channel(
@@ -397,24 +399,8 @@ static int dmaengine_pcm_request_chan_of(struct dmaengine_pcm *pcm,
 			if (PTR_ERR(chan) == -EPROBE_DEFER)
 				return -EPROBE_DEFER;
 
-			bool has_fw_node = dev->of_node || is_acpi_device_node(dev->fwnode);
-			bool name_exists_in_fw = false;
-
-			if (has_fw_node)
-				name_exists_in_fw = device_property_match_string(dev,
-										 "dma-names",
-										 name) >= 0;
-
-			if (has_fw_node && name_exists_in_fw)
-				dev_warn(dev, "DTS/ACPI DMA channel '%s' request failed (%ld)\n",
-					 name, PTR_ERR(chan));
-
-			if (has_fw_node && !name_exists_in_fw)
-				dev_warn(dev, "DTS/ACPI name '%s' not found, legacy failed (%ld)\n",
-					 name, PTR_ERR(chan));
-
-			if (!has_fw_node)
-				dev_warn(dev, "Legacy DMA channel '%s' request failed (%ld)\n",
+			if (device_property_match_string(dev, "dma-names", name) >= 0)
+				dev_warn(dev, "dma-names has '%s' but request failed (%ld)\n",
 					 name, PTR_ERR(chan));
 
 			pcm->chan[i] = NULL;
@@ -468,10 +454,6 @@ int snd_dmaengine_pcm_register(struct device *dev,
 	struct dmaengine_pcm *pcm;
 	int ret;
 
-	component = snd_soc_component_alloc(dev);
-	if (!component)
-		return -ENOMEM;
-
 	pcm = kzalloc_obj(*pcm);
 	if (!pcm)
 		return -ENOMEM;
@@ -480,10 +462,6 @@ int snd_dmaengine_pcm_register(struct device *dev,
 		config = &snd_dmaengine_pcm_default_config;
 	pcm->config = config;
 	pcm->flags = flags;
-
-	if (config->name)
-		snd_soc_component_set_name(component, config->name);
-	snd_soc_component_set_priv(component, pcm);
 
 	ret = dmaengine_pcm_request_chan_of(pcm, dev, config);
 	if (ret)
@@ -494,7 +472,15 @@ int snd_dmaengine_pcm_register(struct device *dev,
 	else
 		driver = &dmaengine_pcm_component;
 
-	ret = snd_soc_register_component(component, driver, NULL, 0);
+	component = snd_soc_component_new(dev, config->name, driver);
+	if (IS_ERR(component)) {
+		ret = PTR_ERR(component);
+		goto err_free_dma;
+	}
+
+	snd_soc_component_set_priv(component, pcm);
+
+	ret = snd_soc_component_register(component, NULL, 0);
 	if (ret)
 		goto err_free_dma;
 

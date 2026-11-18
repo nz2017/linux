@@ -326,7 +326,7 @@ static int stm32_adfsdm_probe(struct platform_device *pdev)
 	struct stm32_adfsdm_priv *priv;
 	int ret;
 
-	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+	priv = devm_kzalloc_obj(&pdev->dev, *priv);
 	if (!priv)
 		return -ENOMEM;
 
@@ -389,3 +389,4 @@ MODULE_DESCRIPTION("stm32 DFSDM DAI driver");
 MODULE_AUTHOR("Arnaud Pouliquen <arnaud.pouliquen@st.com>");
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:" STM32_ADFSDM_DRV_NAME);
+MODULE_IMPORT_NS("IIO_CONSUMER");

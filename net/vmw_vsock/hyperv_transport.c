@@ -697,6 +697,9 @@ static s64 hvs_stream_has_data(struct vsock_sock *vsk)
 	struct hvsock *hvs = vsk->trans;
 	s64 ret;
 
+	if (!hvs->chan)
+		return 0;
+
 	if (hvs->recv_data_len > 0)
 		return hvs->recv_data_len;
 
@@ -960,9 +963,6 @@ static struct hv_driver hvs_drv = {
 static int __init hvs_init(void)
 {
 	int ret;
-
-	if (vmbus_proto_version < VERSION_WIN10)
-		return -ENODEV;
 
 	ret = vmbus_driver_register(&hvs_drv);
 	if (ret != 0)

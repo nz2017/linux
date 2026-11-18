@@ -849,7 +849,7 @@ static int mt6370_chg_probe(struct platform_device *pdev)
 	struct mt6370_priv *priv;
 	int ret;
 
-	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	priv = devm_kzalloc_obj(dev, *priv);
 	if (!priv)
 		return -ENOMEM;
 
@@ -928,3 +928,4 @@ module_platform_driver(mt6370_chg_driver);
 MODULE_AUTHOR("ChiaEn Wu <chiaen_wu@richtek.com>");
 MODULE_DESCRIPTION("MediaTek MT6370 Charger Driver");
 MODULE_LICENSE("GPL v2");
+MODULE_IMPORT_NS("IIO_CONSUMER");

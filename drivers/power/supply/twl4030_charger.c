@@ -934,7 +934,7 @@ twl4030_bci_parse_dt(struct device *dev)
 
 	if (!np)
 		return NULL;
-	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
+	pdata = devm_kzalloc_obj(dev, *pdata);
 	if (!pdata)
 		return pdata;
 
@@ -979,7 +979,7 @@ static int twl4030_bci_probe(struct platform_device *pdev)
 	int ret;
 	u32 reg;
 
-	bci = devm_kzalloc(&pdev->dev, sizeof(*bci), GFP_KERNEL);
+	bci = devm_kzalloc_obj(&pdev->dev, *bci);
 	if (bci == NULL)
 		return -ENOMEM;
 
@@ -1146,3 +1146,4 @@ MODULE_AUTHOR("Gražvydas Ignotas");
 MODULE_DESCRIPTION("TWL4030 Battery Charger Interface driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:twl4030_bci");
+MODULE_IMPORT_NS("IIO_CONSUMER");

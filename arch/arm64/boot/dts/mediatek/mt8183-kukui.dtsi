@@ -13,12 +13,18 @@
 / {
 	aliases {
 		serial0 = &uart0;
+		serial1 = &uart1;
 		mmc0 = &mmc0;
 		mmc1 = &mmc1;
 	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+	};
+
+	firmware {
+		#address-cells = <2>;
+		#size-cells = <2>;
 	};
 
 	backlight_lcd0: backlight_lcd0 {

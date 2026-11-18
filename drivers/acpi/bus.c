@@ -774,37 +774,49 @@ static int __init acpi_setup_sb_notify_handler(void)
                              Device Matching
    -------------------------------------------------------------------------- */
 
-/**
- * acpi_get_first_physical_node - Get first physical node of an ACPI device
- * @adev:	ACPI device in question
- *
- * Return: First physical node of ACPI device @adev
- */
-struct device *acpi_get_first_physical_node(struct acpi_device *adev)
+
+static struct device *primary_physical_device(struct acpi_device *adev)
 {
-	struct mutex *physical_node_lock = &adev->physical_node_lock;
-	struct device *phys_dev;
+	struct acpi_device_physical_node *pn;
 
-	mutex_lock(physical_node_lock);
-	if (list_empty(&adev->physical_node_list)) {
-		phys_dev = NULL;
-	} else {
-		const struct acpi_device_physical_node *node;
+	pn = list_first_entry_or_null(&adev->physical_node_list,
+				      struct acpi_device_physical_node, node);
+	if (pn)
+		return pn->dev;
 
-		node = list_first_entry(&adev->physical_node_list,
-					struct acpi_device_physical_node, node);
-
-		phys_dev = node->dev;
-	}
-	mutex_unlock(physical_node_lock);
-	return phys_dev;
+	return NULL;
 }
-EXPORT_SYMBOL_GPL(acpi_get_first_physical_node);
+
+/**
+ * acpi_bus_get_primary_device - Get first physical device for a given ACPI one
+ * @adev: ACPI device to get the first physical device for.
+ *
+ * Find the first physical device for which @adev is the ACPI companion and
+ * reference count it if present.
+ *
+ * Return: Pointer to the first physical counterpart of @adev or NULL if there
+ * are none.  Callers are responsible for invoking put_device() on the returned
+ * device.
+ */
+struct device *acpi_bus_get_primary_device(struct acpi_device *adev)
+{
+	if (!adev)
+		return NULL;
+
+	guard(mutex)(&adev->physical_node_lock);
+
+	return get_device(primary_physical_device(adev));
+}
+EXPORT_SYMBOL_GPL(acpi_bus_get_primary_device);
 
 static struct acpi_device *acpi_primary_dev_companion(struct acpi_device *adev,
 						      const struct device *dev)
 {
-	const struct device *phys_dev = acpi_get_first_physical_node(adev);
+	const struct device *phys_dev;
+
+	guard(mutex)(&adev->physical_node_lock);
+
+	phys_dev = primary_physical_device(adev);
 
 	return phys_dev && phys_dev == dev ? adev : NULL;
 }
@@ -1098,11 +1110,6 @@ EXPORT_SYMBOL_GPL(acpi_driver_match_device);
                               ACPI Bus operations
    -------------------------------------------------------------------------- */
 
-static int acpi_bus_match(struct device *dev, const struct device_driver *drv)
-{
-	return 0;
-}
-
 static int acpi_device_uevent(const struct device *dev, struct kobj_uevent_env *env)
 {
 	return __acpi_device_uevent_modalias(to_acpi_device(dev), env);
@@ -1110,7 +1117,6 @@ static int acpi_device_uevent(const struct device *dev, struct kobj_uevent_env *
 
 const struct bus_type acpi_bus_type = {
 	.name		= "acpi",
-	.match		= acpi_bus_match,
 	.uevent		= acpi_device_uevent,
 };
 
@@ -1429,7 +1435,7 @@ static int __init acpi_bus_init(void)
 	 */
 	acpi_root_dir = proc_mkdir(ACPI_BUS_FILE_ROOT, NULL);
 
-	result = bus_register(&acpi_bus_type);
+	result = companion_bus_register(&acpi_bus_type);
 	if (!result)
 		return 0;
 
@@ -1443,6 +1449,7 @@ struct kobject *acpi_kobj;
 EXPORT_SYMBOL_GPL(acpi_kobj);
 
 void __weak __init acpi_arch_init(void) { }
+void __weak __init acpi_arch_late_init(void) { }
 
 static int __init acpi_init(void)
 {
@@ -1481,6 +1488,7 @@ static int __init acpi_init(void)
 	acpi_wakeup_device_init();
 	acpi_debugger_init();
 	acpi_setup_sb_notify_handler();
+	acpi_arch_late_init();
 	acpi_viot_init();
 	return 0;
 }

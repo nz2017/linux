@@ -1099,7 +1099,7 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 	if (match)
 		match_flags = (unsigned long)match->data;
 
-	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	priv = devm_kzalloc_obj(dev, *priv);
 	if (!priv)
 		return -ENOMEM;
 
@@ -1137,8 +1137,7 @@ static int nmk_i2c_probe(struct amba_device *adev, const struct amba_id *id)
 	ret = devm_request_irq(dev, priv->irq, i2c_irq_handler, 0,
 			       DRIVER_NAME, priv);
 	if (ret)
-		return dev_err_probe(dev, ret,
-				     "cannot claim the irq %d\n", priv->irq);
+		return ret;
 
 	priv->clk = devm_clk_get_enabled(dev, NULL);
 	if (IS_ERR(priv->clk))

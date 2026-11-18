@@ -1102,8 +1102,7 @@ static int bcm_iproc_i2c_probe(struct platform_device *pdev)
 	struct i2c_adapter *adap;
 	int irq, ret;
 
-	iproc_i2c = devm_kzalloc(&pdev->dev, sizeof(*iproc_i2c),
-				 GFP_KERNEL);
+	iproc_i2c = devm_kzalloc_obj(&pdev->dev, *iproc_i2c);
 	if (!iproc_i2c)
 		return -ENOMEM;
 
@@ -1147,8 +1146,7 @@ static int bcm_iproc_i2c_probe(struct platform_device *pdev)
 				       bcm_iproc_i2c_isr, 0, pdev->name,
 				       iproc_i2c);
 		if (ret < 0)
-			return dev_err_probe(iproc_i2c->device, ret,
-					     "unable to request irq %i\n", irq);
+			return ret;
 
 		iproc_i2c->irq = irq;
 	} else {

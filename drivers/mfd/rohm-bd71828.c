@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) 2019 ROHM Semiconductors
+ * Copyright (C) 2019, 2026 ROHM Semiconductor
  *
- * ROHM BD718[15/28/79] and BD72720 PMIC driver
+ * ROHM BD718[15/28/79], BD72720 and BD73[8/9]00 PMIC driver
  */
 
-#include <linux/device/devres.h>
-#include <linux/gfp_types.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
@@ -16,12 +14,14 @@
 #include <linux/mfd/rohm-bd71815.h>
 #include <linux/mfd/rohm-bd71828.h>
 #include <linux/mfd/rohm-bd72720.h>
+#include <linux/mfd/rohm-bd73800.h>
 #include <linux/mfd/rohm-generic.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/types.h>
+
+#include "rohm-pwrbutton.h"
 
 #define BD72720_TYPED_IRQ_REG(_irq, _stat_offset, _mask, _type_offset)     \
 	[_irq] = {							   \
@@ -55,6 +55,12 @@ static const struct resource bd72720_rtc_irqs[] = {
 	DEFINE_RES_IRQ_NAMED(BD72720_INT_RTC0, "bd70528-rtc-alm-0"),
 	DEFINE_RES_IRQ_NAMED(BD72720_INT_RTC1, "bd70528-rtc-alm-1"),
 	DEFINE_RES_IRQ_NAMED(BD72720_INT_RTC2, "bd70528-rtc-alm-2"),
+};
+
+static const struct resource bd73800_rtc_irqs[] = {
+	DEFINE_RES_IRQ_NAMED(BD73800_INT_RTC0, "bd70528-rtc-alm-0"),
+	DEFINE_RES_IRQ_NAMED(BD73800_INT_RTC1, "bd70528-rtc-alm-1"),
+	DEFINE_RES_IRQ_NAMED(BD73800_INT_RTC2, "bd70528-rtc-alm-2"),
 };
 
 static const struct resource bd71815_power_irqs[] = {
@@ -231,6 +237,17 @@ static const struct mfd_cell bd72720_mfd_cells[] = {
 	/* Power button is registered separately */
 };
 
+static const struct mfd_cell bd73800_mfd_cells[] = {
+	{ .name = "bd73800-pmic", },
+	{ .name = "bd73800-clk", },
+	{ .name = "bd73800-gpio", },
+	{
+		.name = "bd73800-rtc",
+		.num_resources = ARRAY_SIZE(bd73800_rtc_irqs),
+		.resources = bd73800_rtc_irqs,
+	},
+};
+
 static const struct regmap_range bd71815_volatile_ranges[] = {
 	regmap_reg_range(BD71815_REG_SEC, BD71815_REG_YEAR),
 	regmap_reg_range(BD71815_REG_CONF, BD71815_REG_BAT_TEMP),
@@ -340,6 +357,17 @@ static const struct regmap_range bd72720_volatile_ranges_4c[] = {
 	BD72720_UNWRAP_REG_RANGE(BD72720_REG_IMPCHK_CTRL, BD72720_REG_IMPCHK_CTRL),
 };
 
+static const struct regmap_range bd73800_volatile_ranges[] = {
+	regmap_reg_range(BD73800_REG_POR_REASON, BD73800_REG_POW_STATE),
+	regmap_reg_range(BD73800_REG_PS_CTRL_1, BD73800_REG_PS_CTRL_2),
+	regmap_reg_range(BD73800_REG_RCVNUM, BD73800_REG_RCVNUM),
+	regmap_reg_range(BD73800_REG_RTC_SEC, BD73800_REG_RTC_YEAR),
+	regmap_reg_range(BD73800_REG_RTC_CONF, BD73800_REG_RTC_CONF),
+	regmap_reg_range(BD73800_REG_ADC_ACCUM_KICK, BD73800_REG_ADC_TEMP_VAL0),
+	regmap_reg_range(BD73800_REG_INT_MAIN_STAT, BD73800_REG_INT_5_STAT),
+	regmap_reg_range(BD73800_REG_INT_MAIN_SRC, BD73800_REG_INT_5_SRC),
+};
+
 static const struct regmap_access_table bd71815_volatile_regs = {
 	.yes_ranges = &bd71815_volatile_ranges[0],
 	.n_yes_ranges = ARRAY_SIZE(bd71815_volatile_ranges),
@@ -363,6 +391,24 @@ static const struct regmap_access_table bd72720_precious_regs_4b = {
 static const struct regmap_access_table bd72720_volatile_regs_4c = {
 	.yes_ranges = &bd72720_volatile_ranges_4c[0],
 	.n_yes_ranges = ARRAY_SIZE(bd72720_volatile_ranges_4c),
+};
+
+static const struct regmap_access_table bd73800_volatile_regs = {
+	.yes_ranges = bd73800_volatile_ranges,
+	.n_yes_ranges = ARRAY_SIZE(bd73800_volatile_ranges),
+};
+
+static const struct regmap_range bd73800_read_only_ranges[] = {
+	regmap_reg_range(BD73800_REG_PRODUCT_ID, BD73800_REG_NVMVERSION),
+	regmap_reg_range(BD73800_REG_POW_STATE, BD73800_REG_POW_STATE),
+	regmap_reg_range(BD73800_REG_ADC_ACCUM_CNT2, BD73800_REG_ADC_TEMP_VAL0),
+	regmap_reg_range(BD73800_REG_INT_MAIN_STAT, BD73800_REG_INT_MAIN_STAT),
+	regmap_reg_range(BD73800_REG_INT_MAIN_SRC, BD73800_REG_INT_5_SRC),
+};
+
+static const struct regmap_access_table bd73800_ro_regs = {
+	.no_ranges = bd73800_read_only_ranges,
+	.n_no_ranges = ARRAY_SIZE(bd73800_read_only_ranges),
 };
 
 static const struct regmap_config bd71815_regmap = {
@@ -446,6 +492,15 @@ static const struct regmap_config bd72720_regmap_4c = {
 	.val_bits = 8,
 	.volatile_table = &bd72720_volatile_regs_4c,
 	.max_register = BD72720_REG_UNWRAP(BD72720_REG_IMPCHK_CTRL),
+	.cache_type = REGCACHE_MAPLE,
+};
+
+static const struct regmap_config bd73800_regmap = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.wr_table = &bd73800_ro_regs,
+	.volatile_table = &bd73800_volatile_regs,
+	.max_register = BD73800_MAX_REGISTER - 1,
 	.cache_type = REGCACHE_MAPLE,
 };
 
@@ -780,6 +835,60 @@ static int bd72720_set_type_config(unsigned int **buf, unsigned int type,
 	return regmap_irq_set_type_config_simple(buf, type, irq_data, idx, irq_drv_data);
 }
 
+static const struct regmap_irq bd73800_irqs[] = {
+	/* INT_STAT_1 register IRQs, ADC and RTC */
+	REGMAP_IRQ_REG(BD73800_INT_ADC_ACCUM_DONE, 0, BD73800_INT_ADC_ACCUM_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_ADC_ACCUM_OVF, 0, BD73800_INT_ADC_ACCUM_OVF_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_ADC_ACCUM_VAL, 0, BD73800_INT_ADC_ACCUM_VAL_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_ADC_ACCUM_TW, 0, BD73800_INT_ADC_ACCUM_TW_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_ADC_POW_VAL, 0, BD73800_INT_ADC_POW_VAL_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_RTC0, 0, BD73800_INT_RTC0_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_RTC1, 0, BD73800_INT_RTC1_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_RTC2, 0, BD73800_INT_RTC2_MASK),
+
+	/* BUCK reg interrupts */
+	/* INT_STAT_2 IRQs */
+	REGMAP_IRQ_REG(BD73800_INT_BUCK1_DVS_DONE, 1, BD73800_INT_BUCK1_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK2_DVS_DONE, 1, BD73800_INT_BUCK2_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK3_DVS_DONE, 1, BD73800_INT_BUCK3_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK4_DVS_DONE, 1, BD73800_INT_BUCK4_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK5_DVS_DONE, 1, BD73800_INT_BUCK5_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK6_DVS_DONE, 1, BD73800_INT_BUCK6_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK7_DVS_DONE, 1, BD73800_INT_BUCK7_DVS_DONE_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK8_DVS_DONE, 1, BD73800_INT_BUCK8_DVS_DONE_MASK),
+	/* INT_STAT_3 IRQs */
+	REGMAP_IRQ_REG(BD73800_INT_BUCK1_OCP, 2, BD73800_INT_BUCK1_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK2_OCP, 2, BD73800_INT_BUCK2_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK3_OCP, 2, BD73800_INT_BUCK3_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK4_OCP, 2, BD73800_INT_BUCK4_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK5_OCP, 2, BD73800_INT_BUCK5_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK6_OCP, 2, BD73800_INT_BUCK6_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK7_OCP, 2, BD73800_INT_BUCK7_OCP_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_BUCK8_OCP, 2, BD73800_INT_BUCK8_OCP_MASK),
+
+	/* INT_STAT_4 IRQs, power-button, WDG and reset */
+	REGMAP_IRQ_REG(BD73800_INT_PBTN_LONG_PRESS, 3, BD73800_INT_PBTN_LONG_PRESS_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_PBTN_MID_PRESS, 3, BD73800_INT_PBTN_MID_PRESS_MASK),
+	/*
+	 * The SHORT_PUSH is generated when button is first pressed (longer
+	 * than configured time limit), and then released before the MID_PRESS
+	 * time limit. The SHORT_PRESS is generated immediately when button is
+	 * pressed for longer than configured limit, whether it is released or
+	 * not.
+	 */
+	REGMAP_IRQ_REG(BD73800_INT_PBTN_SHORT_PUSH, 3, BD73800_INT_PBTN_SHORT_PUSH_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_PBTN_SHORT_PRESS, 3, BD73800_INT_PBTN_SHORT_PRESS_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_WDG, 3, BD73800_INT_WDG_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_SWRESET, 3, BD73800_INT_SWRESET_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_SEQ_DONE, 3, BD73800_INT_SEQ_DONE_MASK),
+
+	/* INT_STAT_5 IRQs, GPIO */
+	REGMAP_IRQ_REG(BD73800_INT_GPIO1, 4, BD73800_INT_GPIO1_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_GPIO2, 4, BD73800_INT_GPIO2_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_GPIO3, 4, BD73800_INT_GPIO3_MASK),
+	REGMAP_IRQ_REG(BD73800_INT_GPIO4, 4, BD73800_INT_GPIO4_MASK),
+};
+
 static const struct regmap_irq_chip bd71828_irq_chip = {
 	.name = "bd71828_irq",
 	.main_status = BD71828_REG_INT_MAIN,
@@ -834,6 +943,25 @@ static const struct regmap_irq_chip bd72720_irq_chip = {
 	.irq_reg_stride = 1,
 };
 
+static const struct regmap_irq_chip bd73800_irq_chip = {
+	.name = "bd73800_irq",
+	.main_status = BD73800_REG_INT_MAIN_STAT,
+	.irqs = bd73800_irqs,
+	.num_irqs = ARRAY_SIZE(bd73800_irqs),
+	.status_base = BD73800_REG_INT_1_STAT,
+	.unmask_base = BD73800_REG_INT_1_EN,
+	.ack_base = BD73800_REG_INT_1_STAT,
+	.init_ack_masked = true,
+	.num_regs = 5,
+	.num_main_regs = 1,
+	/*
+	 * Ignore mirrored bits [7:5]. They are handled as part of normal INT_4
+	 * handling.
+	 */
+	.num_main_status_bits = 5,
+	.irq_reg_stride = 1,
+};
+
 static int set_clk_mode(struct device *dev, struct regmap *regmap,
 			int clkmode_reg)
 {
@@ -859,83 +987,7 @@ static int set_clk_mode(struct device *dev, struct regmap *regmap,
 				  OUT32K_MODE_CMOS);
 }
 
-static const struct property_entry bd71828_powerkey_parent_props[] = {
-	PROPERTY_ENTRY_STRING("label", "bd71828-pwrkey"),
-	{ }
-};
 
-static const struct property_entry bd71828_powerkey_props[] = {
-	PROPERTY_ENTRY_U32("linux,code", KEY_POWER),
-	PROPERTY_ENTRY_BOOL("wakeup-source"),
-	{ }
-};
-
-#define GPIO_KEYS  0	/* Node corresponding to gpio-keys device itself */
-#define PWRON_KEY  1	/* Node describing power button in gpio-keys */
-
-static int bd71828_i2c_register_swnodes(const struct software_node *nodes)
-{
-	const struct software_node * const node_group[] = {
-		&nodes[GPIO_KEYS], &nodes[PWRON_KEY], NULL
-	};
-
-	return software_node_register_node_group(node_group);
-}
-
-static void bd71828_i2c_unregister_swnodes(void *data)
-{
-	const struct software_node *nodes = data;
-	const struct software_node * const node_group[] = {
-		&nodes[GPIO_KEYS], &nodes[PWRON_KEY], NULL
-	};
-
-	software_node_unregister_node_group(node_group);
-}
-
-static int bd71828_i2c_register_pwrbutton(struct device *dev, int button_irq,
-					  struct irq_domain *irq_domain)
-{
-	const struct resource res[] = {
-		DEFINE_RES_IRQ_NAMED(button_irq, "bd71828-pwrkey"),
-	};
-	struct mfd_cell gpio_keys_cell = {
-		.name = "gpio-keys",
-		.resources = res,
-		.num_resources = ARRAY_SIZE(res),
-	};
-	struct software_node *nodes;
-	int ret;
-
-	nodes = devm_kcalloc(dev, 2, sizeof(*nodes), GFP_KERNEL);
-	if (!nodes)
-		return -ENOMEM;
-
-	nodes[GPIO_KEYS].name = devm_kasprintf(dev, GFP_KERNEL, "%s-power-key", dev_name(dev));
-	if (!nodes[GPIO_KEYS].name)
-		return -ENOMEM;
-
-	nodes[GPIO_KEYS].properties = bd71828_powerkey_parent_props;
-
-	nodes[PWRON_KEY].parent = &nodes[GPIO_KEYS];
-	nodes[PWRON_KEY].properties = bd71828_powerkey_props;
-
-	ret = bd71828_i2c_register_swnodes(nodes);
-	if (ret)
-		return ret;
-
-	ret = devm_add_action_or_reset(dev, bd71828_i2c_unregister_swnodes, nodes);
-	if (ret)
-		return ret;
-
-	gpio_keys_cell.swnode = &nodes[GPIO_KEYS];
-
-	ret = devm_mfd_add_devices(dev, PLATFORM_DEVID_AUTO, &gpio_keys_cell, 1,
-				   NULL, 0, irq_domain);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to register power-button");
-
-	return 0;
-}
 
 static struct i2c_client *bd71828_dev;
 static void bd71828_power_off(void)
@@ -971,7 +1023,7 @@ static struct regmap *bd72720_do_regmaps(struct i2c_client *i2c)
 		return ERR_CAST(secondary_i2c);
 	}
 
-	maps = devm_kzalloc(&i2c->dev, sizeof(*maps), GFP_KERNEL);
+	maps = devm_kzalloc_obj(&i2c->dev, *maps);
 	if (!maps)
 		return ERR_PTR(-ENOMEM);
 
@@ -1048,6 +1100,17 @@ static int bd71828_i2c_probe(struct i2c_client *i2c)
 		main_lvl_val = BD72720_MASK_LVL1_EN_ALL;
 		break;
 	}
+	case ROHM_CHIP_TYPE_BD73800:
+		mfd = bd73800_mfd_cells;
+		cells = ARRAY_SIZE(bd73800_mfd_cells);
+		regmap_config = &bd73800_regmap;
+		irqchip = &bd73800_irq_chip;
+		clkmode_reg = BD73800_REG_OUT32K;
+		button_irq = BD73800_INT_PBTN_SHORT_PUSH;
+		main_lvl_mask_reg = BD73800_REG_INT_MAIN_EN;
+		main_lvl_val = BD73800_INT_MAIN_EN_ALL;
+		break;
+
 	default:
 		dev_err(&i2c->dev, "Unknown device type");
 		return -EINVAL;
@@ -1096,7 +1159,8 @@ static int bd71828_i2c_probe(struct i2c_client *i2c)
 		return dev_err_probe(&i2c->dev, ret, "Failed to create subdevices\n");
 
 	if (button_irq) {
-		ret = bd71828_i2c_register_pwrbutton(&i2c->dev, button_irq, irq_domain);
+		ret = rohm_register_pwrbutton(&i2c->dev, button_irq,
+					      "bd71828-pwrkey", true, irq_domain);
 		if (ret)
 			return ret;
 	}
@@ -1127,6 +1191,9 @@ static const struct of_device_id bd71828_of_match[] = {
 	}, {
 		.compatible = "rohm,bd72720",
 		.data = (void *)ROHM_CHIP_TYPE_BD72720,
+	}, {
+		.compatible = "rohm,bd73800",
+		.data = (void *)ROHM_CHIP_TYPE_BD73800,
 	 },
 	{ },
 };

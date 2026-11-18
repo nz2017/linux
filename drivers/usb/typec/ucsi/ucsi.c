@@ -91,7 +91,8 @@ int ucsi_sync_control_common(struct ucsi *ucsi, u64 command, u32 *cci,
 	if (ret)
 		goto out_clear_bit;
 
-	if (!wait_for_completion_timeout(&ucsi->complete, 5 * HZ))
+	if (!wait_for_completion_timeout(&ucsi->complete,
+					 msecs_to_jiffies(UCSI_TIMEOUT_MS)))
 		ret = -ETIMEDOUT;
 
 out_clear_bit:
@@ -1101,8 +1102,8 @@ static int ucsi_register_plug(struct ucsi_connector *con)
 	plug = typec_register_plug(con->cable, &desc);
 	if (IS_ERR(plug)) {
 		dev_err(con->ucsi->dev,
-			"con%d: failed to register plug (%ld)\n", con->num,
-			PTR_ERR(plug));
+			"con%d: failed to register plug (%pe)\n", con->num,
+			plug);
 		return PTR_ERR(plug);
 	}
 
@@ -1160,8 +1161,8 @@ static int ucsi_register_cable(struct ucsi_connector *con)
 	cable = typec_register_cable(con->port, &desc);
 	if (IS_ERR(cable)) {
 		dev_err(con->ucsi->dev,
-			"con%d: failed to register cable (%ld)\n", con->num,
-			PTR_ERR(cable));
+			"con%d: failed to register cable (%pe)\n", con->num,
+			cable);
 		return PTR_ERR(cable);
 	}
 
@@ -1290,8 +1291,8 @@ static int ucsi_register_partner(struct ucsi_connector *con)
 	partner = typec_register_partner(con->port, &desc);
 	if (IS_ERR(partner)) {
 		dev_err(con->ucsi->dev,
-			"con%d: failed to register partner (%ld)\n", con->num,
-			PTR_ERR(partner));
+			"con%d: failed to register partner (%pe)\n", con->num,
+			partner);
 		return PTR_ERR(partner);
 	}
 
@@ -1518,7 +1519,8 @@ static void ucsi_handle_connector_change(struct work_struct *work)
 
 	if (con->partner && (change & UCSI_CONSTAT_PARTNER_CHANGE)) {
 		ucsi_partner_change(con);
-		ucsi_altmode_update_active(con);
+		if (con->partner_altmode[0])
+			ucsi_altmode_update_active(con);
 
 		/* Complete pending data role swap */
 		if (!completion_done(&con->complete))
@@ -1800,10 +1802,21 @@ static struct fwnode_handle *ucsi_find_fwnode(struct ucsi_connector *con)
 {
 	struct fwnode_handle *fwnode;
 	int i = 1;
+	int ret;
+	u32 port;
 
-	device_for_each_child_node(con->ucsi->dev, fwnode)
-		if (i++ == con->num)
-			return fwnode;
+	device_for_each_child_node(con->ucsi->dev, fwnode) {
+		ret = fwnode_property_read_u32(fwnode, "reg", &port);
+		if (ret < 0) {
+			if (i == con->num)
+				return fwnode;
+		} else {
+			if (port == con->num - 1)
+				return fwnode;
+		}
+
+		i++;
+	}
 	return NULL;
 }
 
@@ -2093,7 +2106,7 @@ static int ucsi_init(struct ucsi *ucsi)
 		goto err_reset;
 
 	if (!ucsi->cap.num_connectors) {
-		ret = -ENODEV;
+		ret = -EAGAIN;
 		goto err_reset;
 	}
 	/* Check if reserved bit set. This is out of spec but happens in buggy FW */
@@ -2121,6 +2134,14 @@ static int ucsi_init(struct ucsi *ucsi)
 			goto err_unregister;
 	}
 
+	/*
+	 * Set ucsi->connector before enabling notifications. A connector
+	 * change event can be handled as soon as the notifications are
+	 * enabled below, and ucsi_connector_change() indexes into
+	 * ucsi->connector, so it must not be NULL at that point.
+	 */
+	ucsi->connector = connector;
+
 	/* Enable all supported notifications */
 	ntfy = ucsi_get_supported_notifications(ucsi);
 	command = UCSI_SET_NOTIFICATION_ENABLE | ntfy;
@@ -2128,7 +2149,6 @@ static int ucsi_init(struct ucsi *ucsi)
 	if (ret < 0)
 		goto err_unregister;
 
-	ucsi->connector = connector;
 	ucsi->ntfy = ntfy;
 
 	mutex_lock(&ucsi->ppm_lock);
@@ -2142,6 +2162,7 @@ static int ucsi_init(struct ucsi *ucsi)
 	return 0;
 
 err_unregister:
+	ucsi->connector = NULL;
 	for (con = connector; con->port; con++)
 		ucsi_unregister_port(con);
 	for (i = 0; i < ucsi->cap.num_connectors; i++)
@@ -2151,13 +2172,23 @@ err_unregister:
 err_reset:
 	memset(&ucsi->cap, 0, sizeof(ucsi->cap));
 	ucsi_reset_ppm(ucsi);
+
+	/*
+	 * The only -EINVAL expected on this path is ucsi_read_error()'s:
+	 * the PPM rejected a standard command. Some PPMs do that, or
+	 * report zero connectors above, for a short while after boot
+	 * before they are ready. Report both as -EAGAIN so that
+	 * ucsi_init_work() can retry them, and only them.
+	 */
+	if (ret == -EINVAL)
+		ret = -EAGAIN;
 err:
 	return ret;
 }
 
 static void ucsi_resume_work(struct work_struct *work)
 {
-	struct ucsi *ucsi = container_of(work, struct ucsi, resume_work);
+	struct ucsi *ucsi = container_of(to_delayed_work(work), struct ucsi, resume_work);
 	struct ucsi_connector *con;
 	u64 command;
 	int ret;
@@ -2166,6 +2197,11 @@ static void ucsi_resume_work(struct work_struct *work)
 	command = UCSI_SET_NOTIFICATION_ENABLE | ucsi->ntfy;
 	ret = ucsi_send_command(ucsi, command, NULL, 0);
 	if (ret < 0) {
+		if (++ucsi->resume_retries < 5) {
+			queue_delayed_work(system_dfl_long_wq, &ucsi->resume_work,
+					   msecs_to_jiffies(500));
+			return;
+		}
 		dev_err(ucsi->dev, "failed to re-enable notifications (%d)\n", ret);
 		return;
 	}
@@ -2186,6 +2222,7 @@ int ucsi_suspend(struct ucsi *ucsi)
 	 * EC is stopped for suspend; state is re-read on resume.
 	 */
 	cancel_delayed_work_sync(&ucsi->work);
+	cancel_delayed_work_sync(&ucsi->resume_work);
 
 	if (!ucsi->connector)
 		return 0;
@@ -2199,8 +2236,10 @@ EXPORT_SYMBOL_GPL(ucsi_suspend);
 
 int ucsi_resume(struct ucsi *ucsi)
 {
-	if (ucsi->connector)
-		queue_work(system_long_wq, &ucsi->resume_work);
+	if (ucsi->connector) {
+		ucsi->resume_retries = 0;
+		queue_delayed_work(system_dfl_long_wq, &ucsi->resume_work, 0);
+	}
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ucsi_resume);
@@ -2211,18 +2250,43 @@ static void ucsi_init_work(struct work_struct *work)
 	int ret;
 
 	ret = ucsi_init(ucsi);
-	if (ret)
-		dev_err_probe(ucsi->dev, ret, "PPM init failed\n");
+	if (!ret) {
+		if (ucsi->work_count)
+			dev_info(ucsi->dev,
+				 "PPM init succeeded after %u attempts\n",
+				 ucsi->work_count + 1);
+		return;
+	}
 
-	if (ret == -EPROBE_DEFER) {
-		if (ucsi->work_count++ > UCSI_ROLE_SWITCH_WAIT_COUNT) {
-			dev_err(ucsi->dev, "PPM init failed, stop trying\n");
+	/*
+	 * -EPROBE_DEFER: the USB role switch is not registered yet. Wait
+	 * up to ten seconds for it.
+	 *
+	 * -EAGAIN: the PPM is not ready to answer commands correctly yet.
+	 * On some platforms that lasts for a short window during boot
+	 * (observed on Lenovo ThinkPad X1 Carbon Gen 14, where it affects
+	 * roughly half of all boots and a retry moments later succeeds).
+	 * One second is plenty for that.
+	 *
+	 * Anything else is not going to change with a retry, so report it
+	 * once and stop.
+	 */
+	if (ret == -EPROBE_DEFER || ret == -EAGAIN) {
+		int limit = ret == -EPROBE_DEFER ? UCSI_ROLE_SWITCH_WAIT_COUNT :
+						 UCSI_PPM_READY_WAIT_COUNT;
+
+		if (ucsi->work_count++ < limit) {
+			dev_dbg(ucsi->dev, "PPM init failed (%pe), retrying\n",
+				ERR_PTR(ret));
+			queue_delayed_work(system_dfl_long_wq, &ucsi->work,
+					   UCSI_ROLE_SWITCH_INTERVAL);
 			return;
 		}
-
-		queue_delayed_work(system_long_wq, &ucsi->work,
-				   UCSI_ROLE_SWITCH_INTERVAL);
+		dev_err(ucsi->dev, "PPM init failed, stop trying\n");
+		return;
 	}
+
+	dev_err_probe(ucsi->dev, ret, "PPM init failed\n");
 }
 
 /**
@@ -2298,7 +2362,7 @@ struct ucsi *ucsi_create(struct device *dev, const struct ucsi_operations *ops)
 	if (!ucsi)
 		return ERR_PTR(-ENOMEM);
 
-	INIT_WORK(&ucsi->resume_work, ucsi_resume_work);
+	INIT_DELAYED_WORK(&ucsi->resume_work, ucsi_resume_work);
 	INIT_DELAYED_WORK(&ucsi->work, ucsi_init_work);
 	mutex_init(&ucsi->ppm_lock);
 	init_completion(&ucsi->complete);
@@ -2344,7 +2408,7 @@ int ucsi_register(struct ucsi *ucsi)
 		UCSI_BCD_GET_MINOR(ucsi->version),
 		UCSI_BCD_GET_SUBMINOR(ucsi->version));
 
-	queue_delayed_work(system_long_wq, &ucsi->work, 0);
+	queue_delayed_work(system_dfl_long_wq, &ucsi->work, 0);
 
 	ucsi_debugfs_register(ucsi);
 	return 0;
@@ -2364,7 +2428,9 @@ void ucsi_unregister(struct ucsi *ucsi)
 
 	/* Make sure that we are not in the middle of driver initialization */
 	cancel_delayed_work_sync(&ucsi->work);
-	cancel_work_sync(&ucsi->resume_work);
+	cancel_delayed_work_sync(&ucsi->resume_work);
+
+	ucsi_debugfs_unregister(ucsi);
 
 	/* Disable notifications */
 	ucsi->ops->async_control(ucsi, cmd);

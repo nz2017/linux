@@ -479,3 +479,212 @@ revert にも ``Signed-off-by:`` を含める必要があります。
 関与せず、その取り扱いや転送を行った人によるものです。SoB の連鎖は、
 パッチがメンテナーを経て最終的に Linus へ届いた実際の経路を反映する
 必要があります。最初の SoB は、単独の主要作者であることを示します。
+
+
+Acked-by:、Cc:、Co-developed-by: を使用する場合
+------------------------------------------------
+
+``Signed-off-by:`` タグは、署名者がパッチの開発に関与したか、
+そのパッチの送付経路に関与したことを示します。
+
+パッチの準備や取り扱いに直接関与していない人が、そのパッチへの
+承認を表明し、記録に残したい場合は、パッチの変更履歴に
+``Acked-by:`` 行を追加するよう依頼できます。
+
+``Acked-by:`` は、何らかの形で影響を受けるコードに責任を持つ人、
+またはそのコードに関与する人が使用することを意図しています。
+最も一般的なのは、パッチの作成にも転送にも関与していない
+メンテナーが使用する場合です。
+
+``Acked-by:`` は、変更されるコードの元の作者など、その分野の
+知識を持つ人、カーネル uAPI パッチをユーザー空間側からレビューする人、
+または機能の主要な利用者など、その他の利害関係者も使用できます。
+このような場合は、必要に応じて意味を明確にするために
+``# Suffix`` を追加すると便利です::
+
+    Acked-by: The Stakeholder <stakeholder@example.org> # As primary user
+
+``Acked-by:`` は ``Signed-off-by:`` ほど正式なものではありません。
+これは、承認した人が少なくともパッチをレビューし、受け入れる意思を
+示したことの記録です。そのため、パッチをマージする人が、
+「はい、問題なさそうです」という返答を手動で ``Acked-by:`` に
+変換することがあります。ただし、通常は明示的な承認を求める方が
+適切です。
+
+``Acked-by:`` は ``Reviewed-by:`` よりも正式なものではありません。
+たとえば、メンテナーはパッチが取り込まれることに同意していても、
+``Reviewed-by:`` を付ける場合ほど十分にはレビューしていないことを
+示すために使用できます。同様に、主要な利用者はパッチの技術的な
+レビューを行っていなくても、全体的な方針、機能、または
+ユーザー向けインターフェースに満足している場合があります。
+
+``Acked-by:`` は、必ずしもパッチ全体への同意を示すものでは
+ありません。たとえば、パッチが複数のサブシステムに影響し、
+そのうち一つのサブシステムのメンテナーから ``Acked-by:`` が
+付けられている場合、通常は、そのメンテナーが担当するコードに
+影響する部分だけへの同意を示します。ここでは状況に応じた判断が
+必要です。疑問がある場合は、メーリングリストアーカイブにある
+元の議論を参照してください。この場合も、意味を明確にするために
+``# Suffix`` を使用できます。
+
+ある人がパッチにコメントする機会を得たものの、コメントしなかった
+場合は、必要に応じてパッチに ``Cc:`` タグを追加できます。このタグは、
+関心を持つ可能性のある人が議論に含まれていたことを記録します。
+なお、これは、名前を記載される本人の明示的な許可なしに使用できる
+可能性のある三つのタグのうちの一つです。詳細については、後述の
+「人をタグ付けするには許可が必要」を参照してください。
+
+``Co-developed-by:`` は、パッチが複数の開発者によって共同で作成された
+ことを示します。複数の人が一つのパッチを共同で作成した場合に、
+``From:`` タグで示される作者に加えて、共同作者の貢献を明記するために
+使用します。
+
+``Co-developed-by:`` は作者であることを示すため、各
+``Co-developed-by:`` の直後には、対応する共同作者の
+``Signed-off-by:`` を必ず記載しなければなりません。通常の sign-off
+手続きが適用されます。つまり、作者が ``From:`` と
+``Co-developed-by:`` のどちらで示されているかにかかわらず、
+``Signed-off-by:`` タグの順序は、可能な限りパッチの時系列上の
+経緯を反映する必要があります。特に、最後の ``Signed-off-by:`` は、
+必ずパッチを提出する開発者のものでなければなりません。
+
+なお、``From:`` タグで示される作者が、メールヘッダーの From 行に
+記載された人物およびメールアドレスと同じ場合、``From:`` タグは
+省略できます。
+
+``From:`` の作者自身が提出するパッチの例::
+
+    <changelog>
+
+    Co-developed-by: First Co-Author <first@coauthor.example.org>
+    Signed-off-by: First Co-Author <first@coauthor.example.org>
+    Co-developed-by: Second Co-Author <second@coauthor.example.org>
+    Signed-off-by: Second Co-Author <second@coauthor.example.org>
+    Signed-off-by: From Author <from@author.example.org>
+
+``Co-developed-by:`` に記載された作者が提出するパッチの例::
+
+    From: From Author <from@author.example.org>
+
+    <changelog>
+
+    Co-developed-by: Random Co-Author <random@coauthor.example.org>
+    Signed-off-by: Random Co-Author <random@coauthor.example.org>
+    Signed-off-by: From Author <from@author.example.org>
+    Co-developed-by: Submitting Co-Author <sub@coauthor.example.org>
+    Signed-off-by: Submitting Co-Author <sub@coauthor.example.org>
+
+
+Reported-by:、Tested-by:、Reviewed-by:、Suggested-by:、Fixes: の使用
+---------------------------------------------------------------------
+
+``Reported-by:`` タグは、バグを発見して報告した人の功績を示すものであり、
+今後も再び協力してもらうきっかけになることが期待されます。このタグは
+バグを対象としています。機能追加の要望に対する功績を示すためには
+使用しないでください。報告が Web 上で参照できない場合を除き、
+``Reported-by:`` タグの後には、その報告を指す ``Closes:`` タグを
+付けてください。報告された問題の一部だけを修正するパッチの場合は、
+``Closes:`` の代わりに ``Link:`` タグを使用できます。なお、
+``Reported-by:`` は、名前を記載される本人の明示的な許可なしに
+使用できる可能性がある三つのタグのうちの一つです。詳細については、
+後述の「人をタグ付けするには許可が必要」を参照してください。
+
+``Tested-by:`` タグは、記載された人が（何らかの環境で）パッチを
+正常にテストしたことを示します。このタグは、何らかのテストが
+実施されたことをメンテナーに知らせ、将来のパッチでテスターを
+探す手段を提供するとともに、テスターの功績を記録します。
+
+一方、``Reviewed-by:`` は、パッチがレビューされ、以下の
+レビューアの声明に従って受け入れ可能と判断されたことを示します::
+
+    Reviewer's statement of oversight
+
+    By offering my Reviewed-by: tag, I state that:
+
+     (a) I have carried out a technical review of this patch to
+         evaluate its appropriateness and readiness for inclusion into
+         the mainline kernel.
+
+     (b) Any problems, concerns, or questions relating to the patch
+         have been communicated back to the submitter.  I am satisfied
+         with the submitter's response to my comments.
+
+     (c) While there may be things that could be improved with this
+         submission, I believe that it is, at this time, (1) a
+         worthwhile modification to the kernel, and (2) free of known
+         issues which would argue against its inclusion.
+
+     (d) While I have reviewed the patch and believe it to be sound, I
+         do not (unless explicitly stated elsewhere) make any
+         warranties or guarantees that it will achieve its stated
+         purpose or function properly in any given situation.
+
+.. note::
+
+   〖試訳〗 ::
+
+    レビューアによる監督声明
+
+    Reviewed-by: タグを付けることにより、私は以下を表明する。
+
+        (a) このパッチがメインラインカーネルへの取り込みに適切であり、
+            その準備が整っているかを評価するため、技術的なレビューを
+            実施した。
+
+        (b) パッチに関する問題、懸念、または質問はすべて提出者に
+            伝えられている。私は、自分のコメントに対する提出者の
+            回答に満足している。
+
+        (c) この提出物には改善できる点が残っている可能性があるが、
+            現時点において、(1) カーネルに対する価値のある変更であり、
+            かつ (2) その取り込みに反対する理由となる既知の問題が
+            存在しないと考える。
+
+        (d) 私はこのパッチをレビューし、妥当であると考えているが、
+            別途明示されていない限り、そのパッチが記載された目的を
+            達成すること、またはいかなる状況においても正しく動作する
+            ことについて、いかなる保証も行わない。
+
+``Reviewed-by:`` タグは、そのパッチが重大な技術的問題を残していない、
+カーネルに対する適切な変更であるという意見を表明するものです。
+必要なレビューを行った既知の身元を持つ人であれば、関心のある
+レビューアは誰でもパッチに ``Reviewed-by:`` タグを付けられます。
+このタグは、レビューアの功績を示すとともに、どの程度のレビューが
+行われたかをメンテナーに知らせる役割を果たします。対象分野を理解し、
+十分なレビューを行うことで知られているレビューアが付けた
+``Reviewed-by:`` タグは、通常、パッチがカーネルに取り込まれる
+可能性を高めます。
+
+``Tested-by:`` と ``Reviewed-by:`` の両方のタグは、メーリングリスト上で
+テスターまたはレビューアから受け取った後、次のバージョンを
+送信するときに、作者が該当するパッチへ追加する必要があります。
+ただし、次のバージョンでパッチが大幅に変更された場合は、これらのタグが
+適用できなくなる可能性があるため、削除する必要があります。
+通常、誰かの ``Acked-by:``、``Tested-by:``、または ``Reviewed-by:`` タグを
+削除した場合は、その理由をパッチの変更履歴で説明する必要があります
+（``---`` 区切りの後）。
+
+``Suggested-by:`` タグは、パッチのアイデアが記載された人によって
+提案されたことを示し、そのアイデアに対する功績を記録します。
+アイデアを提案した人の功績をきちんと記録すれば、今後も再び協力して
+もらうきっかけになることが期待されます。なお、これは、名前を
+記載される本人の明示的な許可なしに使用できる可能性がある三つの
+タグのうちの一つです。詳細については、後述の
+「人をタグ付けするには許可が必要」を参照してください。
+
+``Fixes:`` タグは、そのパッチが以前のコミットにあるバグを修正する
+ことを示します。これは、問題がどこで発生したのかを容易に特定できる
+ようにし、バグ修正のレビューに役立ちます。また、このタグは stable
+kernel チームが、どの stable kernel バージョンに修正を適用すべきかを
+判断する際にも役立ちます。パッチが修正するバグを示す方法としては、
+これが推奨されています。詳細については `変更内容を記述する`_ を
+参照してください。
+
+注意: ``Fixes:`` タグを付けても、stable kernel rules の手順や、
+stable 向けパッチ候補すべてで ``Cc: stable@vger.kernel.org`` を
+指定する要件がなくなるわけではありません。詳細については、
+Documentation/process/stable-kernel-rules.rst を参照してください。
+
+最後に、タグを付けることは歓迎され、通常は非常にありがたいものですが、
+署名者（すなわち、提出者およびメンテナー）は、提示されたタグを
+適用するかどうかを自身の判断で決めることができます。

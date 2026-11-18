@@ -158,10 +158,13 @@ static inline bool __list_del_entry_valid(struct list_head *entry)
  *
  * This is only for internal list manipulation where we know
  * the prev/next entries already!
+ *
+ * Must be inlined to ensure it can be safely called
+ * with initdata arguments.
  */
-static inline void __list_add(struct list_head *new,
-			      struct list_head *prev,
-			      struct list_head *next)
+static __always_inline void __list_add(struct list_head *new,
+				       struct list_head *prev,
+				       struct list_head *next)
 {
 	if (!__list_add_valid(new, prev, next))
 		return;
@@ -179,8 +182,12 @@ static inline void __list_add(struct list_head *new,
  *
  * Insert a new entry after the specified head.
  * This is good for implementing stacks.
+ *
+ * Must be inlined to ensure it can be safely called
+ * with initdata arguments.
  */
-static inline void list_add(struct list_head *new, struct list_head *head)
+static __always_inline void list_add(struct list_head *new,
+				     struct list_head *head)
 {
 	__list_add(new, head, head->next);
 }
@@ -1165,7 +1172,7 @@ static inline void hlist_move_list(struct hlist_head *old,
 {
 	new->first = old->first;
 	if (new->first)
-		new->first->pprev = &new->first;
+		WRITE_ONCE(new->first->pprev, &new->first);
 	old->first = NULL;
 }
 
@@ -1182,10 +1189,10 @@ static inline void hlist_splice_init(struct hlist_head *from,
 				     struct hlist_head *to)
 {
 	if (to->first)
-		to->first->pprev = &last->next;
+		WRITE_ONCE(to->first->pprev, &last->next);
 	last->next = to->first;
 	to->first = from->first;
-	from->first->pprev = &to->first;
+	WRITE_ONCE(from->first->pprev, &to->first);
 	from->first = NULL;
 }
 

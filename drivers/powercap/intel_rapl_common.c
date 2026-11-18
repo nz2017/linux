@@ -32,6 +32,9 @@
 
 #define ENERGY_STATUS_MASK		GENMASK(31, 0)
 
+/* Width of the RAPL energy counters, see the *_ENERGY_STATUS_MASK defines */
+#define RAPL_CNTR_WIDTH			32
+
 #define POWER_UNIT_OFFSET		0x00
 #define POWER_UNIT_MASK			GENMASK(3, 0)
 
@@ -1136,21 +1139,23 @@ static struct rapl_pmu rapl_pmu;
 
 /* PMU helpers */
 
-static void set_pmu_cpumask(struct rapl_package *rp, cpumask_var_t mask)
+static int get_pmu_cpu(struct rapl_package *rp)
 {
 	int cpu;
 
 	if (!rp->has_pmu)
-		return;
+		return nr_cpu_ids;
 
 	/* Only TPMI & MSR RAPL are supported for now */
 	if (rp->priv->type != RAPL_IF_TPMI && rp->priv->type != RAPL_IF_MSR)
-		return;
+		return nr_cpu_ids;
 
 	/* TPMI/MSR RAPL uses any CPU in the package for PMU */
 	for_each_online_cpu(cpu)
 		if (topology_physical_package_id(cpu) == rp->id)
-			cpumask_set_cpu(cpu, mask);
+			return cpu;
+
+	return nr_cpu_ids;
 }
 
 static bool is_rp_pmu_cpu(struct rapl_package *rp, int cpu)
@@ -1227,6 +1232,7 @@ static u64 rapl_event_update(struct perf_event *event)
 	struct rapl_package_pmu_data *data = event_to_pmu_data(event);
 	u64 prev_raw_count, new_raw_count;
 	s64 delta, sdelta;
+	int shift = 64 - RAPL_CNTR_WIDTH;
 
 	/*
 	 * Follow the generic code to drain hwc->prev_count.
@@ -1243,8 +1249,13 @@ static u64 rapl_event_update(struct perf_event *event)
 	 * Now we have the new raw value and have updated the prev
 	 * timestamp already. We can now calculate the elapsed delta
 	 * (event-)time and add that to the generic event.
+	 *
+	 * Careful, the counter is narrower than u64 and is not
+	 * sign-extended above its physical width.  Shift both values up
+	 * so that the subtraction wraps, then shift the result back down.
 	 */
-	delta = new_raw_count - prev_raw_count;
+	delta = (new_raw_count << shift) - (prev_raw_count << shift);
+	delta >>= shift;
 
 	/*
 	 * Scale delta to smallest unit (2^-32)
@@ -1426,6 +1437,7 @@ static ssize_t cpumask_show(struct device *dev,
 {
 	struct rapl_package *rp;
 	cpumask_var_t cpu_mask;
+	int cpu;
 	int ret;
 
 	if (!alloc_cpumask_var(&cpu_mask, GFP_KERNEL))
@@ -1437,7 +1449,9 @@ static ssize_t cpumask_show(struct device *dev,
 
 	/* Choose a cpu for each RAPL Package */
 	list_for_each_entry(rp, &rapl_packages, plist) {
-		set_pmu_cpumask(rp, cpu_mask);
+		cpu = get_pmu_cpu(rp);
+		if (cpu < nr_cpu_ids)
+			cpumask_set_cpu(cpu, cpu_mask);
 	}
 	cpus_read_unlock();
 
@@ -1652,7 +1666,9 @@ void rapl_package_remove_pmu_locked(struct rapl_package *rp)
 			return;
 	}
 
-	perf_pmu_unregister(&rapl_pmu.pmu);
+	if (rapl_pmu.registered)
+		perf_pmu_unregister(&rapl_pmu.pmu);
+
 	memset(&rapl_pmu, 0, sizeof(struct rapl_pmu));
 }
 EXPORT_SYMBOL_NS_GPL(rapl_package_remove_pmu_locked, "INTEL_RAPL");

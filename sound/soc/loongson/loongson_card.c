@@ -55,8 +55,8 @@ static const struct loongson_card_config ls2k0300_dl2k0300b_card_config = {
 	.add_dapm_routes = true,
 };
 
-static int tegra_machine_event(struct snd_soc_dapm_widget *w,
-			       struct snd_kcontrol *k, int event)
+static int loongson_asoc_machine_event(struct snd_soc_dapm_widget *w,
+				       struct snd_kcontrol *k, int event)
 {
 	struct snd_soc_card *card = snd_soc_dapm_to_card(w->dapm);
 	struct loongson_card_data *priv = snd_soc_card_get_drvdata(card);
@@ -72,9 +72,9 @@ static int tegra_machine_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
-static const struct snd_soc_dapm_widget loongson_aosc_dapm_widgets[] = {
-	SND_SOC_DAPM_HP("Headphone", tegra_machine_event),
-	SND_SOC_DAPM_SPK("Speaker", tegra_machine_event),
+static const struct snd_soc_dapm_widget loongson_asoc_dapm_widgets[] = {
+	SND_SOC_DAPM_HP("Headphone", loongson_asoc_machine_event),
+	SND_SOC_DAPM_SPK("Speaker", loongson_asoc_machine_event),
 };
 
 /* Headphones Jack */
@@ -196,7 +196,6 @@ static int loongson_card_parse_acpi(struct loongson_card_data *data)
 	struct snd_soc_card *card = &data->snd_card;
 	const char *codec_dai_name;
 	struct acpi_device *adev;
-	struct device *phy_dev;
 	int i, ret;
 
 	/* fixup platform name based on reference node */
@@ -204,7 +203,7 @@ static int loongson_card_parse_acpi(struct loongson_card_data *data)
 	if (!adev)
 		return -ENOENT;
 
-	phy_dev = acpi_get_first_physical_node(adev);
+	struct device *phy_dev __free(put_device) = acpi_bus_get_primary_device(adev);
 	if (!phy_dev)
 		return -EPROBE_DEFER;
 
@@ -298,7 +297,7 @@ static int loongson_asoc_card_probe(struct platform_device *pdev)
 	struct snd_soc_card *card;
 	int ret;
 
-	ls_priv = devm_kzalloc(dev, sizeof(*ls_priv), GFP_KERNEL);
+	ls_priv = devm_kzalloc_obj(dev, *ls_priv);
 	if (!ls_priv)
 		return -ENOMEM;
 
@@ -314,8 +313,8 @@ static int loongson_asoc_card_probe(struct platform_device *pdev)
 	card->num_links = ARRAY_SIZE(loongson_dai_links);
 
 	if (ls_priv->cfg->add_dapm_widgets) {
-		card->dapm_widgets = loongson_aosc_dapm_widgets;
-		card->num_dapm_widgets = ARRAY_SIZE(loongson_aosc_dapm_widgets);
+		card->dapm_widgets = loongson_asoc_dapm_widgets;
+		card->num_dapm_widgets = ARRAY_SIZE(loongson_asoc_dapm_widgets);
 	}
 
 	snd_soc_card_set_drvdata(card, ls_priv);

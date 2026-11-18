@@ -345,6 +345,7 @@ static int intel_set_power(struct hci_uart *hu, bool powered)
 			devm_free_irq(&idev->pdev->dev, idev->irq, idev);
 			device_wakeup_disable(&idev->pdev->dev);
 
+			pm_runtime_dont_use_autosuspend(&idev->pdev->dev);
 			pm_runtime_disable(&idev->pdev->dev);
 		}
 	}
@@ -1127,7 +1128,7 @@ static int intel_probe(struct platform_device *pdev)
 	struct intel_device *idev;
 	int ret;
 
-	idev = devm_kzalloc(&pdev->dev, sizeof(*idev), GFP_KERNEL);
+	idev = devm_kzalloc_obj(&pdev->dev, *idev);
 	if (!idev)
 		return -ENOMEM;
 

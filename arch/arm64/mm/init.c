@@ -34,6 +34,8 @@
 #include <linux/acpi_iort.h>
 #include <linux/kmemleak.h>
 #include <linux/execmem.h>
+#include <linux/arm-rsi-cmds.h>
+
 
 #include <asm/boot.h>
 #include <asm/fixmap.h>
@@ -43,7 +45,6 @@
 #include <asm/kvm_host.h>
 #include <asm/memory.h>
 #include <asm/numa.h>
-#include <asm/rsi.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <linux/sizes.h>
@@ -340,9 +341,7 @@ void __init arch_mm_preinit(void)
 {
 	unsigned int flags = SWIOTLB_VERBOSE;
 
-	if (is_realm_world() || is_protected_kvm_guest()) {
-		flags |= SWIOTLB_FORCE;
-	} else if (max_pfn <= PFN_DOWN(arm64_dma_phys_limit)) {
+	if (max_pfn <= PFN_DOWN(arm64_dma_phys_limit)) {
 		/*
 		 * If no bouncing needed for ZONE_DMA, reduce the swiotlb
 		 * buffer for kmalloc() bouncing to 1MB per 1GB of RAM.
@@ -350,7 +349,7 @@ void __init arch_mm_preinit(void)
 		unsigned long size =
 			DIV_ROUND_UP(memblock_phys_mem_size(), 1024);
 
-		swiotlb_adjust_size(min(swiotlb_size_or_default(), size));
+		swiotlb_adjust_size(min(swiotlb_default_pool_size(), size));
 	}
 
 	swiotlb_init(true, flags);
@@ -419,6 +418,7 @@ bool cc_platform_has(enum cc_attr attr)
 {
 	switch (attr) {
 	case CC_ATTR_MEM_ENCRYPT:
+	case CC_ATTR_GUEST_MEM_ENCRYPT:
 		return is_realm_world() || is_protected_kvm_guest();
 	default:
 		return false;

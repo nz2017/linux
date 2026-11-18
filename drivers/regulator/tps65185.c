@@ -5,6 +5,7 @@
 
 #include <linux/cleanup.h>
 #include <linux/completion.h>
+#include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
@@ -334,7 +335,7 @@ static int tps65185_probe(struct i2c_client *client)
 	int ret = 0;
 	int i;
 
-	data = devm_kzalloc(&client->dev, sizeof(*data), GFP_KERNEL);
+	data = devm_kzalloc_obj(&client->dev, *data);
 	if (!data)
 		return -ENOMEM;
 
@@ -375,6 +376,11 @@ static int tps65185_probe(struct i2c_client *client)
 		return dev_err_probe(&client->dev, ret,
 				     "failed to get vin regulator\n");
 
+	// TPS65185x PMIC for E Ink Vizplex Enabled Electronic Paper Display Chapter 7.6 Figure 2:
+	// "Minimum delay time between WAKEUP rising edge and IC ready to accept I2C transaction."
+	// https://www.ti.com/lit/ds/symlink/tps65185.pdf
+	usleep_range(1800, 3000);
+
 	data->dev = &client->dev;
 	i2c_set_clientdata(client, data);
 
@@ -386,8 +392,7 @@ static int tps65185_probe(struct i2c_client *client)
 					IRQF_TRIGGER_RISING | IRQF_ONESHOT,
 					"PGOOD", data);
 	if (ret)
-		return dev_err_probe(&client->dev, ret,
-				     "failed to request power good irq\n");
+		return ret;
 
 	if (client->irq) {
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
@@ -395,8 +400,7 @@ static int tps65185_probe(struct i2c_client *client)
 						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 						"tps65185", data);
 		if (ret)
-			return dev_err_probe(&client->dev, ret,
-					     "failed to request irq\n");
+			return ret;
 	}
 
 	ret = regmap_update_bits(data->regmap, TPS65185_REG_INT_EN2, BIT(0), BIT(0));

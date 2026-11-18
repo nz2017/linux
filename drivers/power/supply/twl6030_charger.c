@@ -453,7 +453,7 @@ static int twl6030_charger_probe(struct platform_device *pdev)
 	int ret;
 	u8 val;
 
-	charger = devm_kzalloc(&pdev->dev, sizeof(*charger), GFP_KERNEL);
+	charger = devm_kzalloc_obj(&pdev->dev, *charger);
 	if (!charger)
 		return -ENOMEM;
 
@@ -577,3 +577,4 @@ module_platform_driver(twl6030_charger_driver);
 
 MODULE_DESCRIPTION("TWL6030 Battery Charger Interface driver");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS("IIO_CONSUMER");

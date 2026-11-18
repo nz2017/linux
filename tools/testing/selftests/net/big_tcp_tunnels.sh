@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0
 #
-# Testing for IPv4 and IPv6 BIG TCP over VXLAN and GENEVE tunnels.
+# Testing for IPv4 and IPv6 BIG TCP over VXLAN, GENEVE and bareudp tunnels.
+
+source "$(dirname "$0")/lib.sh"
 
 SERVER_NS=$(mktemp -u server-XXXXXXXX)
 SERVER_IP4="192.168.1.1"
@@ -15,10 +17,17 @@ CLIENT_IP6="2001:db8::1:2"
 CLIENT_IP4_TUN="192.168.2.2"
 CLIENT_IP6_TUN="2001:db8::2:2"
 
-: "${PACKETS_THRESHOLD:=1000}"
-
 # Kselftest framework requirement - SKIP code is 4.
 ksft_skip=4
+
+if [ -z "$PACKETS_THRESHOLD" ]; then
+	if [ "$KSFT_MACHINE_SLOW" = yes ]; then
+		echo 'Debug kernel detected, lowering the default threshold'
+		PACKETS_THRESHOLD=100
+	else
+		PACKETS_THRESHOLD=1000
+	fi
+fi
 
 setup() {
 	ip netns add "$SERVER_NS"
@@ -39,6 +48,27 @@ setup() {
 		gro_max_size 196608 gro_ipv4_max_size 196608
 
 	ip netns exec "$SERVER_NS" netserver >/dev/null
+	wait_local_port_listen "$SERVER_NS" 12865 tcp
+
+	DEFAULT_TCP_MIN_TSO_SEGS=$(ip netns exec "$CLIENT_NS" sysctl -n net.ipv4.tcp_min_tso_segs)
+}
+
+# Create a bareudp device. bareudp only works in external mode: attach the
+# tunnel metadata to all packets sent through the device. Its MTU does not
+# account for the encapsulation either, so leave room for IPv6 and UDP
+# headers.
+# $1: netns, $2: device, $3: local underlay address, $4: remote one
+setup_bareudp() {
+	ip -netns "$1" link add "$2" type bareudp \
+		dstport 6635 ethertype ipv4 multiproto &&
+	ip -netns "$1" link set "$2" mtu 1452 &&
+	tc -netns "$1" qdisc add dev "$2" clsact &&
+	tc -netns "$1" filter add dev "$2" egress matchall \
+		action tunnel_key set src_ip "$3" dst_ip "$4" id 0 ttl 64 &&
+	return 0
+
+	echo "Failed to set up bareudp device $2" >&2
+	return 1
 }
 
 setup_tunnel() {
@@ -52,26 +82,40 @@ setup_tunnel() {
 		echo "Setting up ${1^^} over IPv6, veth tx csum offload $3"
 	fi
 
-	if [ "$1" = vxlan ]; then
+	case "$1" in
+	vxlan)
 		ip -netns "$CLIENT_NS" link add tun0 type vxlan \
 			id 5001 remote "$SERVER_IP" local "$CLIENT_IP" dev link0 dstport 4789
-	else
+		;;
+	geneve)
 		ip -netns "$CLIENT_NS" link add tun0 type geneve \
 			id 5001 remote "$SERVER_IP"
-	fi
+		;;
+	bareudp)
+		setup_bareudp "$CLIENT_NS" tun0 "$CLIENT_IP" "$SERVER_IP" ||
+			return 1
+		;;
+	esac
 	ip -netns "$CLIENT_NS" link set tun0 up
 	ip -netns "$CLIENT_NS" addr replace "$CLIENT_IP4_TUN/24" dev tun0
 	ip -netns "$CLIENT_NS" addr replace "$CLIENT_IP6_TUN/112" dev tun0 nodad
 	ip -netns "$CLIENT_NS" link set tun0 \
 		gso_max_size 196608 gso_ipv4_max_size 196608 \
 		gro_max_size 196608 gro_ipv4_max_size 196608
-	if [ "$1" = vxlan ]; then
+	case "$1" in
+	vxlan)
 		ip -netns "$SERVER_NS" link add tun1 type vxlan \
 			id 5001 remote "$CLIENT_IP" local "$SERVER_IP" dev link1 dstport 4789
-	else
+		;;
+	geneve)
 		ip -netns "$SERVER_NS" link add tun1 type geneve \
 			id 5001 remote "$CLIENT_IP"
-	fi
+		;;
+	bareudp)
+		setup_bareudp "$SERVER_NS" tun1 "$SERVER_IP" "$CLIENT_IP" ||
+			return 1
+		;;
+	esac
 	ip -netns "$SERVER_NS" link set tun1 up
 	ip -netns "$SERVER_NS" addr replace "$SERVER_IP4_TUN/24" dev tun1
 	ip -netns "$SERVER_NS" addr replace "$SERVER_IP6_TUN/112" dev tun1 nodad
@@ -97,8 +141,10 @@ cleanup() {
 }
 
 do_test() {
+	local packets_threshold="$PACKETS_THRESHOLD"
+
 	# When tx csum offload is off, software GSO is performed before passing the
-	# packet to veth. Check BIG TCP packets inside the VXLAN tunnel to verify
+	# packet to veth. Check BIG TCP packets inside the tunnel to verify
 	# the software checksum path: if the checksum code is broken, these packets
 	# will be dropped.
 	if [ "$3" = on ]; then
@@ -115,11 +161,28 @@ do_test() {
 		else
 			IPTABLES=ip6tables
 		fi
+		packets_threshold=$(( PACKETS_THRESHOLD / 10 ))
 	fi
 	if [ "$2" = 4 ]; then
 		IPTABLES_SACK=iptables
 	else
 		IPTABLES_SACK=ip6tables
+	fi
+
+	if [ "$3" != 'on' ] && [ "$KSFT_MACHINE_SLOW" = yes ]; then
+		echo 'Slow configuration; increasing net.ipv4.tcp_min_tso_segs and initcwnd'
+		ip netns exec "$CLIENT_NS" sysctl -w net.ipv4.tcp_min_tso_segs=52
+		if [ "$2" = 4 ]; then
+			ip -netns "$CLIENT_NS" \
+			    route change 192.168.2.0/24 dev tun0 initcwnd 100
+		else
+			ip -netns "$CLIENT_NS" -6 \
+			    route change 2001:db8::2:0/112 dev tun0 initcwnd 100 \
+			    metric 256
+		fi
+	else
+		ip netns exec "$CLIENT_NS" \
+		    sysctl -w net.ipv4.tcp_min_tso_segs="$DEFAULT_TCP_MIN_TSO_SEGS"
 	fi
 
 	ip netns exec "$SERVER_NS" "$IPTABLES" -w -t raw -I PREROUTING -i "${CAPTURE_IFACE}1" -m length ! --length 0:65535 -m comment --comment "bigtcp"
@@ -147,8 +210,8 @@ do_test() {
 	echo "Captured BIG TCP RX packets: $PACKETS_SERVER"
 	echo "Captured BIG TCP TX packets: $PACKETS_CLIENT"
 	echo "Captured TCP SACK packets: $PACKETS_SACK"
-	[ "$PACKETS_SERVER" -gt "$PACKETS_THRESHOLD" ] || return 1
-	[ "$PACKETS_CLIENT" -gt "$PACKETS_THRESHOLD" ] || return 1
+	[ "$PACKETS_SERVER" -gt "$packets_threshold" ] || return 1
+	[ "$PACKETS_CLIENT" -gt "$packets_threshold" ] || return 1
 	[ "$PACKETS_SACK" -lt "$(( PACKETS_CLIENT / 2 ))" ] || return 1
 }
 
@@ -159,6 +222,11 @@ fi
 
 if ! iptables --version &> /dev/null; then
 	echo "SKIP: Could not run test without iptables tool"
+	exit "$ksft_skip"
+fi
+
+if ! tc -V &> /dev/null; then
+	echo "SKIP: Could not run test without tc tool"
 	exit "$ksft_skip"
 fi
 
@@ -175,7 +243,7 @@ fi
 WORKDIR=$(mktemp -d)
 trap cleanup EXIT
 setup
-for tunnel in vxlan geneve; do
+for tunnel in vxlan geneve bareudp; do
 	for tun_family in 4 6; do
 		for traffic_family in 4 6; do
 			for csum_offload in on off; do
